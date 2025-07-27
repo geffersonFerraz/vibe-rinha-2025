@@ -28,7 +28,7 @@ services:
           memory: "100MB"      
 
   payment-processor:
-    image: geffws:latest
+    image: geffws/vibe-rinha-2025:latest
     networks:
       - backend
       - payment-processor
@@ -47,7 +47,7 @@ services:
       - caddy
 
   payment-summary:
-    image: geffws:latest
+    image: geffws/vibe-rinha-2025:latest
     networks:
       - backend
       - payment-processor
