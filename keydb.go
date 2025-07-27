@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -12,9 +13,16 @@ type KeyDB struct {
 
 func NewKeyDB(addr string) *KeyDB {
 	conn := redis.NewClient(&redis.Options{
-		Addr:     "localhost:6379",
-		Password: "", // no password set
-		DB:       0,  // use default DB
+		Addr:         "localhost:6379",
+		Password:     "", // no password set
+		DB:           0,  // use default DB
+		PoolSize:     10, // Pool de conexões
+		MinIdleConns: 5,  // Mínimo de conexões idle
+		MaxRetries:   3,  // Máximo de tentativas
+		DialTimeout:  5 * time.Second,
+		ReadTimeout:  3 * time.Second,
+		WriteTimeout: 3 * time.Second,
+		PoolTimeout:  4 * time.Second,
 	})
 
 	return &KeyDB{
@@ -37,4 +45,9 @@ func (k *KeyDB) Publish(ctx context.Context, message string) error {
 func (k *KeyDB) Subscribe(ctx context.Context) <-chan *redis.Message {
 	pubsub := k.conn.Subscribe(ctx, "payments")
 	return pubsub.Channel()
+}
+
+// Função para fechar conexões adequadamente
+func (k *KeyDB) Close() error {
+	return k.conn.Close()
 }

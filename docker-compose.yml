@@ -8,8 +8,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.4"
-          memory: "150MB"
+          cpus: "0.2"
+          memory: "140MB"
 
   caddy:
     image: caddy:latest
@@ -25,7 +25,7 @@ services:
       resources:
         limits:
           cpus: "0.6"
-          memory: "150MB"      
+          memory: "100MB"      
 
   payment-processor:
     image: geffws:latest
@@ -40,8 +40,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.25"
-          memory: "20MB"
+          cpus: "0.45"
+          memory: "60MB"
     depends_on:
       - keydb
       - caddy
@@ -60,7 +60,7 @@ services:
       resources:
         limits:
           cpus: "0.25"
-          memory: "30MB"
+          memory: "50MB"
     depends_on:
       - keydb
       - caddy 

@@ -25,9 +25,21 @@ type Summary struct {
 var summary orderedmap.OrderedMap[string, RequestToPaymentProcessor]
 var summaryMutex sync.RWMutex
 
+// Configurações para limpeza de memória
+const (
+	CLEANUP_INTERVAL = 5 * time.Minute // Limpeza a cada 5 minutos
+	MAX_SUMMARY_SIZE = 10000           // Máximo de 10k entradas
+	MAX_AGE_HOURS    = 24              // Manter apenas dados das últimas 24h
+)
+
 func listenAndSummarize() {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	msgChan := kdb.Subscribe(ctx)
+
+	// Goroutine para limpeza periódica
+	go cleanupSummaryPeriodically(ctx)
 
 	for msg := range msgChan {
 		request, err := deserializeFromBytes([]byte(msg.Payload))
@@ -39,10 +51,59 @@ func listenAndSummarize() {
 		// Thread-safe append
 		summaryMutex.Lock()
 		summary.Set(request.CorrelationID, request)
+
+		// Limpeza automática se exceder o tamanho máximo
+		if summary.Len() > MAX_SUMMARY_SIZE {
+			cleanupOldEntries()
+		}
 		summaryMutex.Unlock()
 
 		if LOG_ON {
 			fmt.Printf("Mensagem recebida: %+v\n", request)
+		}
+	}
+}
+
+// Limpeza periódica do mapa de resumo
+func cleanupSummaryPeriodically(ctx context.Context) {
+	ticker := time.NewTicker(CLEANUP_INTERVAL)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			summaryMutex.Lock()
+			cleanupOldEntries()
+			summaryMutex.Unlock()
+
+			if LOG_ON {
+				fmt.Printf("Limpeza periódica executada. Tamanho atual: %d\n", summary.Len())
+			}
+		}
+	}
+}
+
+// Remove entradas antigas (mais de 24 horas)
+func cleanupOldEntries() {
+	cutoffTime := time.Now().Add(-MAX_AGE_HOURS * time.Hour)
+
+	// Remove entradas antigas
+	for pair := summary.Oldest(); pair != nil; {
+		next := pair.Next()
+		if pair.Value.RequestedAt.Before(cutoffTime) {
+			summary.Delete(pair.Key)
+		}
+		pair = next
+	}
+
+	// Se ainda estiver muito grande, remove as mais antigas
+	for summary.Len() > MAX_SUMMARY_SIZE {
+		if oldest := summary.Oldest(); oldest != nil {
+			summary.Delete(oldest.Key)
+		} else {
+			break
 		}
 	}
 }
@@ -52,6 +113,7 @@ func summarize(from, to time.Time) Summary {
 
 	summaryMutex.RLock()
 	defer summaryMutex.RUnlock()
+
 	for pair := summary.Oldest(); pair != nil; pair = pair.Next() {
 		if pair.Value.RequestedAt.After(from) && pair.Value.RequestedAt.Before(to) {
 			if pair.Value.Amount > 100 {
