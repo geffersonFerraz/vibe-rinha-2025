@@ -1,0 +1,58 @@
+services:
+
+  pp1:
+    image: geffws/vibe-rinha-2025:latest
+    environment:
+      - PP_LISTEN=pp1
+      - PP_TIMEOUT=1000
+      - PP_DEBUG=true
+    volumes:
+      - ./rinha:/tmp/rinha/
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: "100MB"
+  pp2:
+    image: geffws/vibe-rinha-2025:latest
+    environment:
+      - PP_LISTEN=pp2
+      - PP_TIMEOUT=1000
+      - PP_DEBUG=true
+    volumes:
+      - ./rinha:/tmp/rinha/
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: "100MB"  
+
+  lb1:
+    image: geffws/vibe-rinha-2025-lb:latest
+    ports:
+      - 9999:9999
+    volumes:
+      - ./rinha:/tmp/rinha/
+      - ./config.json:/app/config.json
+    networks:
+      - payment-processor
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: "100MB"
+    depends_on:
+      - pp1
+      - pp2
+
+volumes:
+  rinha:
+    driver: local
+    driver_opts:
+      type: none
+      device: /tmp/rinha
+      o: bind
+
+networks:
+  payment-processor:
+    external: true

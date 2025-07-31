@@ -2,120 +2,112 @@ package main
 
 import (
 	"fmt"
+	"log"
+	"net"
 	"net/http"
 	"os"
-	"os/signal"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"syscall"
 )
 
-var kdb *KeyDB
+func setupGarbageCollector() {
+	runtime.GOMAXPROCS(1)
+	debug.SetMaxStack(32 * 1024 * 1024)
+}
+
+type Config struct {
+	Listen  string `json:"listen"`
+	Timeout int    `json:"timeout"`
+	Debug   bool   `json:"debug"`
+}
+
+func loadConfig() (*Config, error) {
+	var config Config
+	config.Listen = "pp"
+	if listen := os.Getenv("PP_LISTEN"); listen != "" {
+		config.Listen = listen
+	}
+
+	config.Timeout = 1000
+	if timeout := os.Getenv("PP_TIMEOUT"); timeout != "" {
+		timeoutInt, err := strconv.Atoi(timeout)
+		if err != nil {
+			return nil, err
+		}
+		config.Timeout = timeoutInt
+	}
+
+	config.Debug = false
+	if debug := os.Getenv("PP_DEBUG"); debug != "" {
+		config.Debug = debug == "true"
+	}
+
+	log.Println("Config loaded: " + config.Listen)
+	return &config, nil
+}
+
+func createSocketConnection(config *Config) (net.Listener, error) {
+	log.Println("Creating socket connection...")
+	socketFile := fmt.Sprintf("/tmp/rinha/socket-%s.sock", config.Listen)
+
+	// Criar o diretório se não existir
+	socketDir := "/tmp/rinha"
+	if err := os.MkdirAll(socketDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create socket directory: %w", err)
+	}
+
+	// Remover socket anterior se existir
+	syscall.Unlink(socketFile)
+
+	conn, err := net.Listen("unix", socketFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create socket listener: %w", err)
+	}
+
+	log.Printf("Socket created at: %s", socketFile)
+	return conn, nil
+}
 
 func main() {
-	// Configurações do Garbage Collector
 	setupGarbageCollector()
 
-	args := os.Args
-
-	if len(args) < 2 {
-		fmt.Println("Usage: go run main.go <command>")
-		os.Exit(1)
+	config, err := loadConfig()
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	kdb = NewKeyDB("localhost:6379")
-	defer kdb.Close()
+	log.Println("Config loaded: " + config.Listen)
 
-	// Setup graceful shutdown
-	setupGracefulShutdown()
-
-	switch args[1] {
-	case "pp":
-		fmt.Println("Starting the payment processor server...")
-		paymentProcessor()
-	case "ps":
-		fmt.Println("Starting the payment summary server...")
-		paymentSummary()
+	socketConn, err := createSocketConnection(config)
+	if err != nil {
+		log.Fatal(err)
 	}
-}
+	defer socketConn.Close()
 
-// Configurações do Garbage Collector
-func setupGarbageCollector() {
-	// Força GC a cada 100MB alocados
-	debug.SetGCPercent(100)
-
-	// Configura o número máximo de CPUs
-	runtime.GOMAXPROCS(runtime.NumCPU())
-
-	// Configura o tamanho da stack das goroutines
-	debug.SetMaxStack(32 * 1024 * 1024) // 32MB
-
-	fmt.Printf("GC configurado: GCPercent=%d, GOMAXPROCS=%d\n",
-		debug.SetGCPercent(-1), runtime.GOMAXPROCS(0))
-}
-
-// Setup graceful shutdown
-func setupGracefulShutdown() {
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
-
-	go func() {
-		<-c
-		fmt.Println("\nRecebido sinal de shutdown, finalizando...")
-		shutdownGracefully()
-		os.Exit(0)
-	}()
-}
-
-func paymentProcessor() {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/payments", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
-			return
-		}
-		handlePaymentProcessor(w, r)
-	})
-	server := &http.Server{
-		Addr:    ":9099",
-		Handler: mux,
-		HTTP2: &http.HTTP2Config{
-			MaxConcurrentStreams: 100,
-		},
-	}
-
-	go checkCurrentPayment()
-	go channelSubscriber()
-
-	fmt.Println("Payment processor server running on port 9099")
-	server.ListenAndServe()
-}
-
-func paymentSummary() {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/payments-summary", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Método não permitido", http.StatusMethodNotAllowed)
-			return
-		}
-		handlePaymentSummary(w, r)
-
+	m := http.NewServeMux()
+	m.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		log.Println("Received message:")
+		w.Write([]byte("{\"message\": \"Hello kung fu developer!\"}"))
 	})
 
-	server := &http.Server{
-		Addr:    ":9099",
-		Handler: mux,
-		HTTP2: &http.HTTP2Config{
-			MaxConcurrentStreams: 1000,
-		},
-	}
-	if LOG_ON {
-		fmt.Println("Server is running on port 9099")
+	m.HandleFunc("/payments", func(w http.ResponseWriter, r *http.Request) {
+		log.Println("Received message:")
+		w.Write([]byte("{\"message\": \"Hello payments!\"}"))
+	})
+
+	m.HandleFunc("/payments-summary", func(w http.ResponseWriter, r *http.Request) {
+		log.Println("Received message:")
+		w.Write([]byte("{\"default\":{\"totalRequests\":43236,\"totalAmount\":415542345.98},\"fallback\":{\"totalRequests\":423545,\"totalAmount\":329347.34}}"))
+	})
+
+	server := http.Server{
+		Handler: m,
 	}
 
-	// Inicia o listener de mensagens em background
-	go listenAndSummarize()
+	if err := server.Serve(socketConn); err != nil {
+		log.Fatal(err)
+	}
 
-	fmt.Println("Payment summary server running on port 9099")
-	server.ListenAndServe()
 }
